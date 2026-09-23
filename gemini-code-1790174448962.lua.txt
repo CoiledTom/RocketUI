@@ -1,0 +1,1364 @@
+--[[
+    RocketUI - UI Library para Roblox (Versão Final Completa)
+    Criador: CoiledTom
+    Estilo: Obsidian / Dark / Premium / Compacto / Mobile-First
+--]]
+
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+
+-- ==================================================
+-- 1. CONFIGURAÇÃO E TEMAS
+-- ==================================================
+local RocketUI = {
+    Version = "1.0.0",
+    Connections = {},
+    CurrentTheme = "Obsidian"
+}
+
+RocketUI.Themes = {
+    Obsidian = {
+        Background = Color3.fromRGB(8, 9, 12),
+        BackgroundTrans = 0.15,
+        Panel = Color3.fromRGB(15, 16, 21),
+        PanelTrans = 0.1,
+        Card = Color3.fromRGB(23, 24, 30),
+        Hover = Color3.fromRGB(31, 32, 40),
+        Text = Color3.fromRGB(242, 243, 247),
+        Muted = Color3.fromRGB(145, 148, 158),
+        Accent = Color3.fromRGB(255, 133, 45), -- Laranja
+        Purple = Color3.fromRGB(147, 91, 255),
+        Red = Color3.fromRGB(245, 75, 86),
+        Green = Color3.fromRGB(57, 215, 108),
+        Blue = Color3.fromRGB(76, 151, 255)
+    },
+    Dark = {
+        Background = Color3.fromRGB(14, 15, 18),
+        BackgroundTrans = 0.1,
+        Panel = Color3.fromRGB(20, 22, 28),
+        PanelTrans = 0.05,
+        Card = Color3.fromRGB(28, 30, 38),
+        Hover = Color3.fromRGB(38, 41, 52),
+        Text = Color3.fromRGB(250, 250, 250),
+        Muted = Color3.fromRGB(160, 165, 175),
+        Accent = Color3.fromRGB(255, 133, 45),
+        Purple = Color3.fromRGB(157, 101, 255),
+        Red = Color3.fromRGB(255, 85, 96),
+        Green = Color3.fromRGB(67, 225, 118),
+        Blue = Color3.fromRGB(86, 161, 255)
+    },
+    Neon = {
+        Background = Color3.fromRGB(5, 5, 10),
+        BackgroundTrans = 0.2,
+        Panel = Color3.fromRGB(12, 12, 22),
+        PanelTrans = 0.1,
+        Card = Color3.fromRGB(18, 18, 32),
+        Hover = Color3.fromRGB(28, 28, 48),
+        Text = Color3.fromRGB(255, 255, 255),
+        Muted = Color3.fromRGB(130, 140, 170),
+        Accent = Color3.fromRGB(255, 100, 20),
+        Purple = Color3.fromRGB(180, 50, 255),
+        Red = Color3.fromRGB(255, 50, 80),
+        Green = Color3.fromRGB(0, 255, 150),
+        Blue = Color3.fromRGB(0, 180, 255)
+    }
+}
+
+-- ==================================================
+-- 2. CARREGAMENTO DE ÍCONES DINÂMICO COM FALLBACK
+-- ==================================================
+local IconsData = {}
+local ICONS_URL = "https://raw.githubusercontent.com/CoiledTom/RocketUI/refs/heads/main/Icons.lua"
+
+task.spawn(function()
+    local success, response = pcall(function()
+        return game:HttpGet(ICONS_URL)
+    end)
+    if success and response then
+        local loadSuccess, loadedIcons = pcall(function()
+            return loadstring(response)()
+        end)
+        if loadSuccess and type(loadedIcons) == "table" then
+            IconsData = loadedIcons
+        end
+    end
+end)
+
+function RocketUI:GetIcon(name)
+    if type(name) == "string" and IconsData[name] then
+        return IconsData[name]
+    end
+    return nil
+end
+
+function RocketUI:CreateIcon(parent, name, size, color)
+    size = size or 18
+    color = color or RocketUI.Themes[RocketUI.CurrentTheme].Text
+
+    local iconData = RocketUI:GetIcon(name)
+    
+    if iconData then
+        local image = Instance.new("ImageLabel")
+        image.Name = "Icon_" .. tostring(name)
+        image.BackgroundTransparency = 1
+        image.Size = UDim2.fromOffset(size, size)
+        image.AnchorPoint = Vector2.new(0.5, 0.5)
+        image.Position = UDim2.fromScale(0.5, 0.5)
+        image.ImageColor3 = color
+        image.Parent = parent
+
+        if type(iconData) == "string" then
+            image.Image = iconData
+        elseif type(iconData) == "table" then
+            image.Image = iconData.Image or iconData.id or ""
+            if iconData.RectMin and iconData.RectSize then
+                image.ImageRectOffset = iconData.RectMin
+                image.ImageRectSize = iconData.RectSize
+            end
+        end
+        return image
+    else
+        local fallback = Instance.new("TextLabel")
+        fallback.Name = "Icon_Fallback"
+        fallback.BackgroundTransparency = 1
+        fallback.Size = UDim2.fromOffset(size, size)
+        fallback.Font = Enum.Font.GothamBold
+        fallback.Text = string.sub(tostring(name or "?"), 1, 1):upper()
+        fallback.TextColor3 = color
+        fallback.TextSize = math.floor(size * 0.7)
+        fallback.Parent = parent
+        return fallback
+    end
+end
+
+-- ==================================================
+-- 3. HELPER DE DRAG E SUPORTE A TOUCH / MOUSE
+-- ==================================================
+local function TrackConnection(connection)
+    table.insert(RocketUI.Connections, connection)
+    return connection
+end
+
+local function Tween(object, info, properties)
+    local tween = TweenService:Create(object, info, properties)
+    tween:Play()
+    return tween
+end
+
+local function EnableDragging(dragHandle, frameToMove)
+    local dragging = false
+    local dragInput, dragStart, startPos
+
+    local function update(input)
+        local delta = input.Position - dragStart
+        frameToMove.Position = UDim2.new(
+            startPos.X.Scale,
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale,
+            startPos.Y.Offset + delta.Y
+        )
+    end
+
+    TrackConnection(dragHandle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frameToMove.Position
+
+            local endedConn
+            endedConn = input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                    endedConn:Disconnect()
+                end
+            end)
+        end
+    end))
+
+    TrackConnection(dragHandle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end))
+
+    TrackConnection(UserInputService.InputChanged:Connect(function(input)
+        if input == dragInput and dragging then
+            update(input)
+        end
+    end))
+end
+
+-- ==================================================
+-- 4. RAÍZ E RESPONSIVIDADE
+-- ==================================================
+local ParentContainer = (gethui and gethui()) or CoreGui:FindFirstChild("RobloxGui") or CoreGui
+
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "RocketUI_Container"
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = ParentContainer
+
+local NotificationHolder = Instance.new("Frame")
+NotificationHolder.Name = "NotificationHolder"
+NotificationHolder.Size = UDim2.new(0, 300, 1, -20)
+NotificationHolder.Position = UDim2.new(1, -310, 0, 10)
+NotificationHolder.BackgroundTransparency = 1
+NotificationHolder.ZIndex = 9999
+NotificationHolder.Parent = ScreenGui
+
+local UIListLayoutNotif = Instance.new("UIListLayout")
+UIListLayoutNotif.SortOrder = Enum.SortOrder.LayoutOrder
+UIListLayoutNotif.VerticalAlignment = Enum.VerticalAlignment.Bottom
+UIListLayoutNotif.Padding = UDim.new(0, 8)
+UIListLayoutNotif.Parent = NotificationHolder
+
+-- ==================================================
+-- 5. SISTEMA DE NOTIFICAÇÕES PRÓPRIO
+-- ==================================================
+function RocketUI:Notify(options)
+    options = options or {}
+    local title = options.Title or "RocketUI"
+    local content = options.Content or ""
+    local nType = options.Type or "Info"
+    local duration = options.Duration or 4
+
+    local theme = RocketUI.Themes[RocketUI.CurrentTheme]
+    local typeColors = {
+        Success = theme.Green,
+        Info = theme.Blue,
+        Warning = theme.Accent,
+        Error = theme.Red
+    }
+    local typeIcons = {
+        Success = "check",
+        Info = "info",
+        Warning = "triangle-alert",
+        Error = "x"
+    }
+
+    local barColor = typeColors[nType] or theme.Accent
+    local iconName = typeIcons[nType] or "info"
+
+    local card = Instance.new("Frame")
+    card.Name = "NotificationCard"
+    card.Size = UDim2.new(1, 0, 0, 0)
+    card.AutomaticSize = Enum.AutomaticSize.Y
+    card.BackgroundColor3 = theme.Card
+    card.BackgroundTransparency = 0.1
+    card.ClipsDescendants = true
+    card.Parent = NotificationHolder
+
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = card
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = theme.Hover
+    stroke.Thickness = 1
+    stroke.Parent = card
+
+    local iconBox = Instance.new("Frame")
+    iconBox.Size = UDim2.new(0, 24, 0, 24)
+    iconBox.Position = UDim2.new(0, 10, 0, 10)
+    iconBox.BackgroundTransparency = 1
+    iconBox.Parent = card
+
+    RocketUI:CreateIcon(iconBox, iconName, 18, barColor)
+
+    local titleLabel = Instance.new("TextLabel")
+    titleLabel.Size = UDim2.new(1, -45, 0, 18)
+    titleLabel.Position = UDim2.new(0, 40, 0, 8)
+    titleLabel.BackgroundTransparency = 1
+    titleLabel.Font = Enum.Font.GothamBold
+    titleLabel.Text = title
+    titleLabel.TextColor3 = theme.Text
+    titleLabel.TextSize = 13
+    titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    titleLabel.Parent = card
+
+    local contentLabel = Instance.new("TextLabel")
+    contentLabel.Size = UDim2.new(1, -45, 0, 0)
+    contentLabel.AutomaticSize = Enum.AutomaticSize.Y
+    contentLabel.Position = UDim2.new(0, 40, 0, 26)
+    contentLabel.BackgroundTransparency = 1
+    contentLabel.Font = Enum.Font.Gotham
+    contentLabel.Text = content
+    contentLabel.TextColor3 = theme.Muted
+    contentLabel.TextSize = 12
+    contentLabel.TextWrapped = true
+    contentLabel.TextXAlignment = Enum.TextXAlignment.Left
+    contentLabel.Parent = card
+
+    local padding = Instance.new("UIPadding")
+    padding.PaddingBottom = UDim.new(0, 12)
+    padding.Parent = card
+
+    local progressBar = Instance.new("Frame")
+    progressBar.Size = UDim2.new(1, 0, 0, 3)
+    progressBar.Position = UDim2.new(0, 0, 1, -3)
+    progressBar.BackgroundColor3 = barColor
+    progressBar.BorderSizePixel = 0
+    progressBar.Parent = card
+
+    card.GroupTransparency = 1
+    Tween(card, TweenInfo.new(0.3), {GroupTransparency = 0})
+    Tween(progressBar, TweenInfo.new(duration, Enum.EasingStyle.Linear), {Size = UDim2.new(0, 0, 0, 3)})
+
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(1, 0, 1, 0)
+    closeBtn.BackgroundTransparency = 1
+    closeBtn.Text = ""
+    closeBtn.Parent = card
+
+    local function dismiss()
+        local tw = Tween(card, TweenInfo.new(0.3), {GroupTransparency = 1})
+        tw.Completed:Connect(function()
+            card:Destroy()
+        end)
+    end
+
+    closeBtn.MouseButton1Click:Connect(dismiss)
+    task.delay(duration, dismiss)
+end
+
+-- ==================================================
+-- 6. CRIAR JANELA PRINCIPAL
+-- ==================================================
+function RocketUI:CreateWindow(options)
+    options = options or {}
+    local title = options.Title or "RocketUI"
+    local subtitle = options.Subtitle or "Obsidian"
+    local mainIcon = options.Icon or "rocket"
+
+    local theme = RocketUI.Themes[RocketUI.CurrentTheme]
+
+    local minimized = false
+    local bubbleMode = false
+
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.Size = UDim2.new(0, 720, 0, 500)
+    MainFrame.Position = UDim2.new(0.5, -360, 0.5, -250)
+    MainFrame.BackgroundColor3 = theme.Background
+    MainFrame.BackgroundTransparency = theme.BackgroundTrans
+    MainFrame.ClipsDescendants = true
+    MainFrame.Parent = ScreenGui
+
+    local UiCorner = Instance.new("UICorner")
+    UiCorner.CornerRadius = UDim.new(0, 10)
+    UiCorner.Parent = MainFrame
+
+    local MainStroke = Instance.new("UIStroke")
+    MainStroke.Color = theme.Hover
+    MainStroke.Thickness = 1
+    MainStroke.Parent = MainFrame
+
+    local UiScale = Instance.new("UIScale")
+    UiScale.Parent = MainFrame
+
+    local function UpdateScale()
+        local vpSize = workspace.CurrentCamera and workspace.CurrentCamera.ViewportSize or Vector2.new(1280, 720)
+        if vpSize.X < 740 or vpSize.Y < 520 then
+            local scaleX = (vpSize.X - 20) / 720
+            local scaleY = (vpSize.Y - 20) / 500
+            UiScale.Scale = math.min(scaleX, scaleY, 1)
+        else
+            UiScale.Scale = 1
+        end
+    end
+    UpdateScale()
+    if workspace.CurrentCamera then
+        TrackConnection(workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(UpdateScale))
+    end
+
+    local Topbar = Instance.new("Frame")
+    Topbar.Name = "Topbar"
+    Topbar.Size = UDim2.new(1, 0, 0, 42)
+    Topbar.BackgroundColor3 = theme.Panel
+    Topbar.BackgroundTransparency = theme.PanelTrans
+    Topbar.Parent = MainFrame
+
+    local TopbarCorner = Instance.new("UICorner")
+    TopbarCorner.CornerRadius = UDim.new(0, 10)
+    TopbarCorner.Parent = Topbar
+
+    local DragArea = Instance.new("Frame")
+    DragArea.Name = "DragArea"
+    DragArea.Size = UDim2.new(1, -130, 1, 0)
+    DragArea.BackgroundTransparency = 1
+    DragArea.Parent = Topbar
+
+    EnableDragging(DragArea, MainFrame)
+
+    local LogoHolder = Instance.new("Frame")
+    LogoHolder.Size = UDim2.new(0, 24, 0, 24)
+    LogoHolder.Position = UDim2.new(0, 12, 0.5, -12)
+    LogoHolder.BackgroundTransparency = 1
+    LogoHolder.Parent = DragArea
+
+    RocketUI:CreateIcon(LogoHolder, mainIcon, 18, theme.Accent)
+
+    local TitleLabel = Instance.new("TextLabel")
+    TitleLabel.Position = UDim2.new(0, 42, 0, 5)
+    TitleLabel.Size = UDim2.new(0, 200, 0, 18)
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Font = Enum.Font.GothamBold
+    TitleLabel.Text = title
+    TitleLabel.TextColor3 = theme.Text
+    TitleLabel.TextSize = 14
+    TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    TitleLabel.Parent = DragArea
+
+    local SubtitleLabel = Instance.new("TextLabel")
+    SubtitleLabel.Position = UDim2.new(0, 42, 0, 22)
+    SubtitleLabel.Size = UDim2.new(0, 200, 0, 14)
+    SubtitleLabel.BackgroundTransparency = 1
+    SubtitleLabel.Font = Enum.Font.Gotham
+    SubtitleLabel.Text = subtitle
+    SubtitleLabel.TextColor3 = theme.Muted
+    SubtitleLabel.TextSize = 11
+    SubtitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SubtitleLabel.Parent = DragArea
+
+    local ControlsHolder = Instance.new("Frame")
+    ControlsHolder.Size = UDim2.new(0, 110, 1, 0)
+    ControlsHolder.Position = UDim2.new(1, -115, 0, 0)
+    ControlsHolder.BackgroundTransparency = 1
+    ControlsHolder.Parent = Topbar
+
+    local ControlsList = Instance.new("UIListLayout")
+    ControlsList.FillDirection = Enum.FillDirection.Horizontal
+    ControlsList.HorizontalAlignment = Enum.HorizontalAlignment.Right
+    ControlsList.VerticalAlignment = Enum.VerticalAlignment.Center
+    ControlsList.Padding = UDim.new(0, 6)
+    ControlsList.Parent = ControlsHolder
+
+    local function CreateTopbarButton(name, iconName)
+        local btn = Instance.new("ImageButton")
+        btn.Name = name
+        btn.Size = UDim2.fromOffset(28, 28)
+        btn.BackgroundColor3 = theme.Card
+        btn.BackgroundTransparency = 0.5
+        btn.AutoButtonColor = false
+        btn.Parent = ControlsHolder
+
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, 6)
+        btnCorner.Parent = btn
+
+        local iconObj = RocketUI:CreateIcon(btn, iconName, 14, theme.Muted)
+
+        btn.MouseEnter:Connect(function()
+            Tween(btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.Hover})
+            if iconObj and iconObj:IsA("ImageLabel") then
+                Tween(iconObj, TweenInfo.new(0.2), {ImageColor3 = theme.Text})
+            end
+        end)
+
+        btn.MouseLeave:Connect(function()
+            Tween(btn, TweenInfo.new(0.2), {BackgroundColor3 = theme.Card})
+            if iconObj and iconObj:IsA("ImageLabel") then
+                Tween(iconObj, TweenInfo.new(0.2), {ImageColor3 = theme.Muted})
+            end
+        end)
+
+        return btn, iconObj
+    end
+
+    local BtnMinimize, IconMinimize = CreateTopbarButton("Minimize", "minus")
+    local BtnBubble, IconBubble = CreateTopbarButton("Bubble", "circle-dot")
+    local BtnClose, IconClose = CreateTopbarButton("Close", "x")
+
+    local BodyFrame = Instance.new("Frame")
+    BodyFrame.Name = "BodyFrame"
+    BodyFrame.Size = UDim2.new(1, 0, 1, -42)
+    BodyFrame.Position = UDim2.new(0, 0, 0, 42)
+    BodyFrame.BackgroundTransparency = 1
+    BodyFrame.Parent = MainFrame
+
+    local Sidebar = Instance.new("Frame")
+    Sidebar.Name = "Sidebar"
+    Sidebar.Size = UDim2.new(0, 160, 1, -10)
+    Sidebar.Position = UDim2.new(0, 5, 0, 5)
+    Sidebar.BackgroundColor3 = theme.Panel
+    Sidebar.BackgroundTransparency = theme.PanelTrans
+    Sidebar.Parent = BodyFrame
+
+    local SideCorner = Instance.new("UICorner")
+    SideCorner.CornerRadius = UDim.new(0, 8)
+    SideCorner.Parent = Sidebar
+
+    local SideScroll = Instance.new("ScrollingFrame")
+    SideScroll.Size = UDim2.new(1, -8, 1, -8)
+    SideScroll.Position = UDim2.new(0, 4, 0, 4)
+    SideScroll.BackgroundTransparency = 1
+    SideScroll.ScrollBarThickness = 0
+    SideScroll.Parent = Sidebar
+
+    local SideList = Instance.new("UIListLayout")
+    SideList.SortOrder = Enum.SortOrder.LayoutOrder
+    SideList.Padding = UDim.new(0, 4)
+    SideList.Parent = SideScroll
+
+    local ContentArea = Instance.new("Frame")
+    ContentArea.Name = "ContentArea"
+    ContentArea.Size = UDim2.new(1, -175, 1, -10)
+    ContentArea.Position = UDim2.new(0, 170, 0, 5)
+    ContentArea.BackgroundTransparency = 1
+    ContentArea.Parent = BodyFrame
+
+    -- ==================================================
+    -- 7. BUBBLE MODE (SEM BORDAS / UI STROKE)
+    -- ==================================================
+    local BubbleBtn = Instance.new("ImageButton")
+    BubbleBtn.Name = "RocketUI_Bubble"
+    BubbleBtn.Size = UDim2.fromOffset(48, 48)
+    BubbleBtn.Position = UDim2.new(0.05, 0, 0.2, 0)
+    BubbleBtn.BackgroundColor3 = theme.Background
+    BubbleBtn.BackgroundTransparency = 0.2
+    BubbleBtn.Visible = false
+    BubbleBtn.Active = true
+    BubbleBtn.ZIndex = 9000
+    BubbleBtn.Parent = ScreenGui
+
+    local BubbleCorner = Instance.new("UICorner")
+    BubbleCorner.CornerRadius = UDim.new(1, 0)
+    BubbleCorner.Parent = BubbleBtn
+
+    RocketUI:CreateIcon(BubbleBtn, "layout-dashboard", 22, theme.Accent)
+    EnableDragging(BubbleBtn, BubbleBtn)
+
+    local function ToggleBubbleMode()
+        bubbleMode = not bubbleMode
+        if bubbleMode then
+            MainFrame.Visible = false
+            BubbleBtn.Visible = true
+        else
+            MainFrame.Visible = true
+            BubbleBtn.Visible = false
+        end
+    end
+
+    BtnBubble.MouseButton1Click:Connect(ToggleBubbleMode)
+    BubbleBtn.MouseButton1Click:Connect(ToggleBubbleMode)
+
+    BtnMinimize.MouseButton1Click:Connect(function()
+        minimized = not minimized
+        if minimized then
+            BodyFrame.Visible = false
+            MainFrame.Size = UDim2.new(0, 720, 0, 42)
+            if IconMinimize and IconMinimize:IsA("ImageLabel") then
+                local newIcon = RocketUI:GetIcon("maximize")
+                if newIcon then IconMinimize.Image = type(newIcon) == "string" and newIcon or newIcon.Image end
+            end
+        else
+            BodyFrame.Visible = true
+            MainFrame.Size = UDim2.new(0, 720, 0, 500)
+            if IconMinimize and IconMinimize:IsA("ImageLabel") then
+                local newIcon = RocketUI:GetIcon("minus")
+                if newIcon then IconMinimize.Image = type(newIcon) == "string" and newIcon or newIcon.Image end
+            end
+        end
+    end)
+
+    -- ==================================================
+    -- 8. MODAL DE CONFIRMAÇÃO
+    -- ==================================================
+    local ModalOverlay = Instance.new("Frame")
+    ModalOverlay.Name = "ModalOverlay"
+    ModalOverlay.Size = UDim2.new(1, 0, 1, 0)
+    ModalOverlay.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    ModalOverlay.BackgroundTransparency = 0.5
+    ModalOverlay.Visible = false
+    ModalOverlay.ZIndex = 10000
+    ModalOverlay.Parent = ScreenGui
+
+    local ModalBox = Instance.new("Frame")
+    ModalBox.Size = UDim2.new(0, 320, 0, 150)
+    ModalBox.Position = UDim2.new(0.5, -160, 0.5, -75)
+    ModalBox.BackgroundColor3 = theme.Panel
+    ModalBox.Parent = ModalOverlay
+
+    local ModalCorner = Instance.new("UICorner")
+    ModalCorner.CornerRadius = UDim.new(0, 8)
+    ModalCorner.Parent = ModalBox
+
+    local ModalStroke = Instance.new("UIStroke")
+    ModalStroke.Color = theme.Hover
+    ModalStroke.Thickness = 1
+    ModalStroke.Parent = ModalBox
+
+    local ModalTitle = Instance.new("TextLabel")
+    ModalTitle.Size = UDim2.new(1, 0, 0, 30)
+    ModalTitle.Position = UDim2.new(0, 0, 0, 15)
+    ModalTitle.BackgroundTransparency = 1
+    ModalTitle.Font = Enum.Font.GothamBold
+    ModalTitle.Text = "Fechar RocketUI?"
+    ModalTitle.TextColor3 = theme.Text
+    ModalTitle.TextSize = 15
+    ModalTitle.Parent = ModalBox
+
+    local ModalSub = Instance.new("TextLabel")
+    ModalSub.Size = UDim2.new(1, -30, 0, 30)
+    ModalSub.Position = UDim2.new(0, 15, 0, 45)
+    ModalSub.BackgroundTransparency = 1
+    ModalSub.Font = Enum.Font.Gotham
+    ModalSub.Text = "Tem certeza que deseja destruir a interface?"
+    ModalSub.TextColor3 = theme.Muted
+    ModalSub.TextSize = 12
+    ModalSub.TextWrapped = true
+    ModalSub.Parent = ModalBox
+
+    local BtnConfirmY = Instance.new("TextButton")
+    BtnConfirmY.Size = UDim2.new(0, 120, 0, 32)
+    BtnConfirmY.Position = UDim2.new(0.5, -130, 1, -45)
+    BtnConfirmY.BackgroundColor3 = theme.Red
+    BtnConfirmY.Font = Enum.Font.GothamBold
+    BtnConfirmY.Text = "Sim (Y)"
+    BtnConfirmY.TextColor3 = theme.Text
+    BtnConfirmY.TextSize = 13
+    BtnConfirmY.Parent = ModalBox
+
+    local BtnConfirmYCorner = Instance.new("UICorner")
+    BtnConfirmYCorner.CornerRadius = UDim.new(0, 6)
+    BtnConfirmYCorner.Parent = BtnConfirmY
+
+    local BtnConfirmN = Instance.new("TextButton")
+    BtnConfirmN.Size = UDim2.new(0, 120, 0, 32)
+    BtnConfirmN.Position = UDim2.new(0.5, 10, 1, -45)
+    BtnConfirmN.BackgroundColor3 = theme.Card
+    BtnConfirmN.Font = Enum.Font.GothamBold
+    BtnConfirmN.Text = "Não (N)"
+    BtnConfirmN.TextColor3 = theme.Text
+    BtnConfirmN.TextSize = 13
+    BtnConfirmN.Parent = ModalBox
+
+    local BtnConfirmNCorner = Instance.new("UICorner")
+    BtnConfirmNCorner.CornerRadius = UDim.new(0, 6)
+    BtnConfirmNCorner.Parent = BtnConfirmN
+
+    BtnClose.MouseButton1Click:Connect(function()
+        ModalOverlay.Visible = true
+        BubbleBtn.Visible = false
+    end)
+
+    BtnConfirmN.MouseButton1Click:Connect(function()
+        ModalOverlay.Visible = false
+        if bubbleMode then BubbleBtn.Visible = true end
+    end)
+
+    BtnConfirmY.MouseButton1Click:Connect(function()
+        for _, conn in ipairs(RocketUI.Connections) do
+            pcall(function() conn:Disconnect() end)
+        end
+        ScreenGui:Destroy()
+    end)
+
+    -- ==================================================
+    -- 9. SISTEMA DE ABAS E COMPONENTES
+    -- ==================================================
+    local WindowObject = {
+        Tabs = {},
+        CurrentTab = nil
+    }
+
+    function WindowObject:CreateTab(tabOptions)
+        tabOptions = tabOptions or {}
+        local tabName = tabOptions.Name or "Tab"
+        local tabIcon = tabOptions.Icon or "layout-dashboard"
+
+        local TabBtn = Instance.new("TextButton")
+        TabBtn.Size = UDim2.new(1, 0, 0, 32)
+        TabBtn.BackgroundColor3 = theme.Card
+        TabBtn.BackgroundTransparency = 0.8
+        TabBtn.AutoButtonColor = false
+        TabBtn.Text = ""
+        TabBtn.Parent = SideScroll
+
+        local TabCorner = Instance.new("UICorner")
+        TabCorner.CornerRadius = UDim.new(0, 6)
+        TabCorner.Parent = TabBtn
+
+        local TabIconHolder = Instance.new("Frame")
+        TabIconHolder.Size = UDim2.new(0, 20, 0, 20)
+        TabIconHolder.Position = UDim2.new(0, 8, 0.5, -10)
+        TabIconHolder.BackgroundTransparency = 1
+        TabIconHolder.Parent = TabBtn
+
+        RocketUI:CreateIcon(TabIconHolder, tabIcon, 15, theme.Muted)
+
+        local TabLabel = Instance.new("TextLabel")
+        TabLabel.Size = UDim2.new(1, -35, 1, 0)
+        TabLabel.Position = UDim2.new(0, 32, 0, 0)
+        TabLabel.BackgroundTransparency = 1
+        TabLabel.Font = Enum.Font.GothamMedium
+        TabLabel.Text = tabName
+        TabLabel.TextColor3 = theme.Muted
+        TabLabel.TextSize = 12
+        TabLabel.TextXAlignment = Enum.TextXAlignment.Left
+        TabLabel.Parent = TabBtn
+
+        local TabContainer = Instance.new("ScrollingFrame")
+        TabContainer.Size = UDim2.new(1, 0, 1, 0)
+        TabContainer.BackgroundTransparency = 1
+        TabContainer.ScrollBarThickness = 0
+        TabContainer.Visible = false
+        TabContainer.Parent = ContentArea
+
+        local TabList = Instance.new("UIListLayout")
+        TabList.SortOrder = Enum.SortOrder.LayoutOrder
+        TabList.Padding = UDim.new(0, 8)
+        TabList.Parent = TabContainer
+
+        local function ActivateTab()
+            for _, tab in ipairs(WindowObject.Tabs) do
+                tab.Container.Visible = false
+                Tween(tab.Button, TweenInfo.new(0.2), {BackgroundTransparency = 0.8})
+                tab.Label.TextColor3 = theme.Muted
+            end
+            TabContainer.Visible = true
+            Tween(TabBtn, TweenInfo.new(0.2), {BackgroundTransparency = 0})
+            TabLabel.TextColor3 = theme.Accent
+            WindowObject.CurrentTab = TabContainer
+        end
+
+        TabBtn.MouseButton1Click:Connect(ActivateTab)
+
+        local TabObject = {
+            Button = TabBtn,
+            Label = TabLabel,
+            Container = TabContainer
+        }
+
+        table.insert(WindowObject.Tabs, TabObject)
+
+        if #WindowObject.Tabs == 1 then
+            ActivateTab()
+        end
+
+        -- ==================================================
+        -- 10. COMPONENTES INDIVIDUAIS
+        -- ==================================================
+
+        -- COMPONENTE: CARD CONTAINER
+        function TabObject:Card(cOpts)
+            cOpts = cOpts or {}
+            local cardFrame = Instance.new("Frame")
+            cardFrame.Size = UDim2.new(1, 0, 0, cOpts.Height or 60)
+            cardFrame.BackgroundColor3 = theme.Card
+            cardFrame.Parent = TabContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 6)
+            cCorner.Parent = cardFrame
+
+            local cStroke = Instance.new("UIStroke")
+            cStroke.Color = theme.Hover
+            cStroke.Thickness = 1
+            cStroke.Parent = cardFrame
+
+            return cardFrame
+        end
+
+        -- COMPONENTE: BUTTON
+        function TabObject:Button(btnOpts)
+            btnOpts = btnOpts or {}
+            local bTitle = btnOpts.Title or "Button"
+            local bIcon = btnOpts.Icon
+            local callback = btnOpts.Callback or function() end
+
+            local card = Instance.new("TextButton")
+            card.Size = UDim2.new(1, 0, 0, 36)
+            card.BackgroundColor3 = theme.Card
+            card.AutoButtonColor = false
+            card.Text = ""
+            card.Parent = TabContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 6)
+            cCorner.Parent = card
+
+            local cStroke = Instance.new("UIStroke")
+            cStroke.Color = theme.Hover
+            cStroke.Thickness = 1
+            cStroke.Parent = card
+
+            local offset = 12
+            if bIcon then
+                local iconFrame = Instance.new("Frame")
+                iconFrame.Size = UDim2.new(0, 20, 0, 20)
+                iconFrame.Position = UDim2.new(0, 10, 0.5, -10)
+                iconFrame.BackgroundTransparency = 1
+                iconFrame.Parent = card
+
+                RocketUI:CreateIcon(iconFrame, bIcon, 16, theme.Accent)
+                offset = 36
+            end
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, -offset - 10, 1, 0)
+            label.Position = UDim2.new(0, offset, 0, 0)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamMedium
+            label.Text = bTitle
+            label.TextColor3 = theme.Text
+            label.TextSize = 12
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.Parent = card
+
+            card.MouseButton1Click:Connect(function()
+                Tween(card, TweenInfo.new(0.1), {Size = UDim2.new(1, -4, 0, 34)})
+                task.wait(0.1)
+                Tween(card, TweenInfo.new(0.1), {Size = UDim2.new(1, 0, 0, 36)})
+                pcall(callback)
+            end)
+        end
+
+        -- COMPONENTE: TOGGLE
+        function TabObject:Toggle(tOpts)
+            tOpts = tOpts or {}
+            local tTitle = tOpts.Title or "Toggle"
+            local tIcon = tOpts.Icon
+            local state = tOpts.Default or false
+            local callback = tOpts.Callback or function() end
+
+            local card = Instance.new("Frame")
+            card.Size = UDim2.new(1, 0, 0, 38)
+            card.BackgroundColor3 = theme.Card
+            card.Parent = TabContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 6)
+            cCorner.Parent = card
+
+            local offset = 12
+            if tIcon then
+                local iconFrame = Instance.new("Frame")
+                iconFrame.Size = UDim2.new(0, 20, 0, 20)
+                iconFrame.Position = UDim2.new(0, 10, 0.5, -10)
+                iconFrame.BackgroundTransparency = 1
+                iconFrame.Parent = card
+
+                RocketUI:CreateIcon(iconFrame, tIcon, 16, theme.Accent)
+                offset = 36
+            end
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, -offset - 60, 1, 0)
+            label.Position = UDim2.new(0, offset, 0, 0)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamMedium
+            label.Text = tTitle
+            label.TextColor3 = theme.Text
+            label.TextSize = 12
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.Parent = card
+
+            local switch = Instance.new("Frame")
+            switch.Size = UDim2.new(0, 38, 0, 20)
+            switch.Position = UDim2.new(1, -48, 0.5, -10)
+            switch.BackgroundColor3 = state and theme.Accent or theme.Hover
+            switch.Parent = card
+
+            local switchCorner = Instance.new("UICorner")
+            switchCorner.CornerRadius = UDim.new(1, 0)
+            switchCorner.Parent = switch
+
+            local circle = Instance.new("Frame")
+            circle.Size = UDim2.new(0, 14, 0, 14)
+            circle.Position = state and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)
+            circle.BackgroundColor3 = theme.Text
+            circle.Parent = switch
+
+            local circleCorner = Instance.new("UICorner")
+            circleCorner.CornerRadius = UDim.new(1, 0)
+            circleCorner.Parent = circle
+
+            local toggleBtn = Instance.new("TextButton")
+            toggleBtn.Size = UDim2.new(1, 0, 1, 0)
+            toggleBtn.BackgroundTransparency = 1
+            toggleBtn.Text = ""
+            toggleBtn.Parent = card
+
+            local ToggleObj = {}
+
+            function ToggleObj:Set(val)
+                state = val
+                Tween(switch, TweenInfo.new(0.2), {BackgroundColor3 = state and theme.Accent or theme.Hover})
+                Tween(circle, TweenInfo.new(0.2), {Position = state and UDim2.new(1, -17, 0.5, -7) or UDim2.new(0, 3, 0.5, -7)})
+                pcall(callback, state)
+            end
+
+            function ToggleObj:Get()
+                return state
+            end
+
+            toggleBtn.MouseButton1Click:Connect(function()
+                ToggleObj:Set(not state)
+            end)
+
+            return ToggleObj
+        end
+
+        -- COMPONENTE: CHECKBOX
+        function TabObject:Checkbox(cOpts)
+            cOpts = cOpts or {}
+            local cTitle = cOpts.Title or "Checkbox"
+            local state = cOpts.Default or false
+            local callback = cOpts.Callback or function() end
+
+            local card = Instance.new("TextButton")
+            card.Size = UDim2.new(1, 0, 0, 34)
+            card.BackgroundColor3 = theme.Card
+            card.AutoButtonColor = false
+            card.Text = ""
+            card.Parent = TabContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 6)
+            cCorner.Parent = card
+
+            local box = Instance.new("Frame")
+            box.Size = UDim2.new(0, 18, 0, 18)
+            box.Position = UDim2.new(0, 10, 0.5, -9)
+            box.BackgroundColor3 = state and theme.Accent or theme.Hover
+            box.Parent = card
+
+            local boxCorner = Instance.new("UICorner")
+            boxCorner.CornerRadius = UDim.new(0, 4)
+            boxCorner.Parent = box
+
+            local checkIcon = RocketUI:CreateIcon(box, "check", 12, theme.Text)
+            if checkIcon then checkIcon.Visible = state end
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, -40, 1, 0)
+            label.Position = UDim2.new(0, 36, 0, 0)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamMedium
+            label.Text = cTitle
+            label.TextColor3 = theme.Text
+            label.TextSize = 12
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.Parent = card
+
+            card.MouseButton1Click:Connect(function()
+                state = not state
+                box.BackgroundColor3 = state and theme.Accent or theme.Hover
+                if checkIcon then checkIcon.Visible = state end
+                pcall(callback, state)
+            end)
+        end
+
+        -- COMPONENTE: COLOR PICKER
+        function TabObject:ColorPicker(cpOpts)
+            cpOpts = cpOpts or {}
+            local cpTitle = cpOpts.Title or "Color Picker"
+            local currentColor = cpOpts.Default or theme.Accent
+            local callback = cpOpts.Callback or function() end
+
+            local isOpen = false
+
+            local card = Instance.new("Frame")
+            card.Size = UDim2.new(1, 0, 0, 38)
+            card.BackgroundColor3 = theme.Card
+            card.ClipsDescendants = true
+            card.Parent = TabContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 6)
+            cCorner.Parent = card
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(0, 150, 0, 38)
+            label.Position = UDim2.new(0, 12, 0, 0)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamMedium
+            label.Text = cpTitle
+            label.TextColor3 = theme.Text
+            label.TextSize = 12
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.Parent = card
+
+            local preview = Instance.new("Frame")
+            preview.Size = UDim2.new(0, 24, 0, 24)
+            preview.Position = UDim2.new(1, -36, 0, 7)
+            preview.BackgroundColor3 = currentColor
+            preview.Parent = card
+
+            local pCorner = Instance.new("UICorner")
+            pCorner.CornerRadius = UDim.new(0, 4)
+            pCorner.Parent = preview
+
+            local triggerBtn = Instance.new("TextButton")
+            triggerBtn.Size = UDim2.new(1, 0, 0, 38)
+            triggerBtn.BackgroundTransparency = 1
+            triggerBtn.Text = ""
+            triggerBtn.Parent = card
+
+            local paletteContainer = Instance.new("Frame")
+            paletteContainer.Size = UDim2.new(1, -24, 0, 30)
+            paletteContainer.Position = UDim2.new(0, 12, 0, 42)
+            paletteContainer.BackgroundTransparency = 1
+            paletteContainer.Parent = card
+
+            local palList = Instance.new("UIListLayout")
+            palList.FillDirection = Enum.FillDirection.Horizontal
+            palList.HorizontalAlignment = Enum.HorizontalAlignment.SpaceBetween
+            palList.Parent = paletteContainer
+
+            local presetColors = {
+                theme.Accent, theme.Purple, theme.Red, theme.Green, theme.Blue, Color3.fromRGB(255, 255, 255)
+            }
+
+            for _, col in ipairs(presetColors) do
+                local pBtn = Instance.new("TextButton")
+                pBtn.Size = UDim2.new(0, 24, 0, 24)
+                pBtn.BackgroundColor3 = col
+                pBtn.Text = ""
+                pBtn.Parent = paletteContainer
+
+                local pBtnCorner = Instance.new("UICorner")
+                pBtnCorner.CornerRadius = UDim.new(0, 4)
+                pBtnCorner.Parent = pBtn
+
+                pBtn.MouseButton1Click:Connect(function()
+                    currentColor = col
+                    preview.BackgroundColor3 = currentColor
+                    pcall(callback, currentColor)
+                end)
+            end
+
+            triggerBtn.MouseButton1Click:Connect(function()
+                isOpen = not isOpen
+                Tween(card, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, isOpen and 80 or 38)})
+            end)
+        end
+
+        -- COMPONENTE: DROPDOWN
+        function TabObject:Dropdown(dOpts)
+            dOpts = dOpts or {}
+            local dTitle = dOpts.Title or "Dropdown"
+            local optionsList = dOpts.Options or {}
+            local selected = dOpts.Default or optionsList[1] or ""
+            local callback = dOpts.Callback or function() end
+
+            local isOpen = false
+
+            local card = Instance.new("Frame")
+            card.Size = UDim2.new(1, 0, 0, 38)
+            card.BackgroundColor3 = theme.Card
+            card.ClipsDescendants = true
+            card.Parent = TabContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 6)
+            cCorner.Parent = card
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(0, 150, 0, 38)
+            label.Position = UDim2.new(0, 12, 0, 0)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamMedium
+            label.Text = dTitle
+            label.TextColor3 = theme.Text
+            label.TextSize = 12
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.Parent = card
+
+            local valLabel = Instance.new("TextLabel")
+            valLabel.Size = UDim2.new(1, -190, 0, 38)
+            valLabel.Position = UDim2.new(0, 150, 0, 0)
+            valLabel.BackgroundTransparency = 1
+            valLabel.Font = Enum.Font.Gotham
+            valLabel.Text = selected
+            valLabel.TextColor3 = theme.Accent
+            valLabel.TextSize = 12
+            valLabel.TextXAlignment = Enum.TextXAlignment.Right
+            valLabel.Parent = card
+
+            local arrowHolder = Instance.new("Frame")
+            arrowHolder.Size = UDim2.new(0, 20, 0, 20)
+            arrowHolder.Position = UDim2.new(1, -28, 0, 9)
+            arrowHolder.BackgroundTransparency = 1
+            arrowHolder.Parent = card
+
+            RocketUI:CreateIcon(arrowHolder, "chevron-right", 14, theme.Muted)
+
+            local triggerBtn = Instance.new("TextButton")
+            triggerBtn.Size = UDim2.new(1, 0, 0, 38)
+            triggerBtn.BackgroundTransparency = 1
+            triggerBtn.Text = ""
+            triggerBtn.Parent = card
+
+            local optionsContainer = Instance.new("Frame")
+            optionsContainer.Size = UDim2.new(1, -16, 0, #optionsList * 30)
+            optionsContainer.Position = UDim2.new(0, 8, 0, 40)
+            optionsContainer.BackgroundTransparency = 1
+            optionsContainer.Parent = card
+
+            local optListLayout = Instance.new("UIListLayout")
+            optListLayout.Padding = UDim.new(0, 4)
+            optListLayout.Parent = optionsContainer
+
+            for _, opt in ipairs(optionsList) do
+                local optBtn = Instance.new("TextButton")
+                optBtn.Size = UDim2.new(1, 0, 0, 26)
+                optBtn.BackgroundColor3 = theme.Hover
+                optBtn.Font = Enum.Font.Gotham
+                optBtn.Text = tostring(opt)
+                optBtn.TextColor3 = theme.Text
+                optBtn.TextSize = 11
+                optBtn.Parent = optionsContainer
+
+                local optCorner = Instance.new("UICorner")
+                optCorner.CornerRadius = UDim.new(0, 4)
+                optCorner.Parent = optBtn
+
+                optBtn.MouseButton1Click:Connect(function()
+                    selected = opt
+                    valLabel.Text = selected
+                    isOpen = false
+                    Tween(card, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, 38)})
+                    pcall(callback, selected)
+                end)
+            end
+
+            triggerBtn.MouseButton1Click:Connect(function()
+                isOpen = not isOpen
+                local targetHeight = isOpen and (44 + #optionsList * 30) or 38
+                Tween(card, TweenInfo.new(0.2), {Size = UDim2.new(1, 0, 0, targetHeight)})
+            end)
+        end
+
+        -- COMPONENTE: INPUT
+        function TabObject:Input(iOpts)
+            iOpts = iOpts or {}
+            local iTitle = iOpts.Title or "Input"
+            local placeholder = iOpts.Placeholder or "Digite aqui..."
+            local callback = iOpts.Callback or function() end
+
+            local card = Instance.new("Frame")
+            card.Size = UDim2.new(1, 0, 0, 38)
+            card.BackgroundColor3 = theme.Card
+            card.Parent = TabContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 6)
+            cCorner.Parent = card
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(0, 140, 1, 0)
+            label.Position = UDim2.new(0, 12, 0, 0)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamMedium
+            label.Text = iTitle
+            label.TextColor3 = theme.Text
+            label.TextSize = 12
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.Parent = card
+
+            local boxFrame = Instance.new("Frame")
+            boxFrame.Size = UDim2.new(0, 160, 0, 26)
+            boxFrame.Position = UDim2.new(1, -170, 0.5, -13)
+            boxFrame.BackgroundColor3 = theme.Hover
+            boxFrame.Parent = card
+
+            local boxCorner = Instance.new("UICorner")
+            boxCorner.CornerRadius = UDim.new(0, 4)
+            boxCorner.Parent = boxFrame
+
+            local textBox = Instance.new("TextBox")
+            textBox.Size = UDim2.new(1, -10, 1, 0)
+            textBox.Position = UDim2.new(0, 5, 0, 0)
+            textBox.BackgroundTransparency = 1
+            textBox.Font = Enum.Font.Gotham
+            textBox.PlaceholderText = placeholder
+            textBox.PlaceholderColor3 = theme.Muted
+            textBox.Text = ""
+            textBox.TextColor3 = theme.Text
+            textBox.TextSize = 11
+            textBox.TextXAlignment = Enum.TextXAlignment.Left
+            textBox.Parent = boxFrame
+
+            textBox.FocusLost:Connect(function(enterPressed)
+                pcall(callback, textBox.Text, enterPressed)
+            end)
+        end
+
+        -- COMPONENTE: SLIDER
+        function TabObject:Slider(sOpts)
+            sOpts = sOpts or {}
+            local sTitle = sOpts.Title or "Slider"
+            local min = sOpts.Min or 0
+            local max = sOpts.Max or 100
+            local default = math.clamp(sOpts.Default or min, min, max)
+            local increment = sOpts.Increment or 1
+            local callback = sOpts.Callback or function() end
+
+            local card = Instance.new("Frame")
+            card.Size = UDim2.new(1, 0, 0, 46)
+            card.BackgroundColor3 = theme.Card
+            card.Parent = TabContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 6)
+            cCorner.Parent = card
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, -60, 0, 20)
+            label.Position = UDim2.new(0, 12, 0, 4)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.GothamMedium
+            label.Text = sTitle
+            label.TextColor3 = theme.Text
+            label.TextSize = 12
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.Parent = card
+
+            local valLabel = Instance.new("TextLabel")
+            valLabel.Size = UDim2.new(0, 50, 0, 20)
+            valLabel.Position = UDim2.new(1, -62, 0, 4)
+            valLabel.BackgroundTransparency = 1
+            valLabel.Font = Enum.Font.GothamBold
+            valLabel.Text = tostring(default)
+            valLabel.TextColor3 = theme.Accent
+            valLabel.TextSize = 12
+            valLabel.TextXAlignment = Enum.TextXAlignment.Right
+            valLabel.Parent = card
+
+            local sliderTrack = Instance.new("Frame")
+            sliderTrack.Size = UDim2.new(1, -24, 0, 6)
+            sliderTrack.Position = UDim2.new(0, 12, 0, 28)
+            sliderTrack.BackgroundColor3 = theme.Hover
+            sliderTrack.Parent = card
+
+            local trackCorner = Instance.new("UICorner")
+            trackCorner.CornerRadius = UDim.new(1, 0)
+            trackCorner.Parent = sliderTrack
+
+            local alpha = (default - min) / (max - min)
+
+            local sliderFill = Instance.new("Frame")
+            sliderFill.Size = UDim2.new(alpha, 0, 1, 0)
+            sliderFill.BackgroundColor3 = theme.Accent
+            sliderFill.Parent = sliderTrack
+
+            local fillCorner = Instance.new("UICorner")
+            fillCorner.CornerRadius = UDim.new(1, 0)
+            fillCorner.Parent = sliderFill
+
+            local isDragging = false
+
+            local function UpdateSlider(input)
+                local trackAbsPos = sliderTrack.AbsolutePosition.X
+                local trackAbsSize = sliderTrack.AbsoluteSize.X
+                local mousePos = input.Position.X
+
+                local rel = math.clamp((mousePos - trackAbsPos) / trackAbsSize, 0, 1)
+                local rawValue = min + (max - min) * rel
+                local steppedValue = math.floor((rawValue / increment) + 0.5) * increment
+                steppedValue = math.clamp(steppedValue, min, max)
+
+                local newAlpha = (steppedValue - min) / (max - min)
+                sliderFill.Size = UDim2.new(newAlpha, 0, 1, 0)
+                valLabel.Text = tostring(steppedValue)
+
+                pcall(callback, steppedValue)
+            end
+
+            TrackConnection(sliderTrack.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    isDragging = true
+                    UpdateSlider(input)
+                end
+            end))
+
+            TrackConnection(UserInputService.InputChanged:Connect(function(input)
+                if isDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                    UpdateSlider(input)
+                end
+            end))
+
+            TrackConnection(UserInputService.InputEnded:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                    isDragging = false
+                end
+            end))
+        end
+
+        -- COMPONENTE: SECTION / LABEL / DIVIDER / THEME SELECTOR
+        function TabObject:Section(text)
+            local secLabel = Instance.new("TextLabel")
+            secLabel.Size = UDim2.new(1, 0, 0, 22)
+            secLabel.BackgroundTransparency = 1
+            secLabel.Font = Enum.Font.GothamBold
+            secLabel.Text = string.upper(text or "SEÇÃO")
+            secLabel.TextColor3 = theme.Muted
+            secLabel.TextSize = 10
+            secLabel.TextXAlignment = Enum.TextXAlignment.Left
+            secLabel.Parent = TabContainer
+        end
+
+        function TabObject:Label(text)
+            local card = Instance.new("Frame")
+            card.Size = UDim2.new(1, 0, 0, 30)
+            card.BackgroundColor3 = theme.Card
+            card.Parent = TabContainer
+
+            local cCorner = Instance.new("UICorner")
+            cCorner.CornerRadius = UDim.new(0, 6)
+            cCorner.Parent = card
+
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, -20, 1, 0)
+            label.Position = UDim2.new(0, 10, 0, 0)
+            label.BackgroundTransparency = 1
+            label.Font = Enum.Font.Gotham
+            label.Text = text or ""
+            label.TextColor3 = theme.Text
+            label.TextSize = 12
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.Parent = card
+        end
+
+        function TabObject:Divider()
+            local div = Instance.new("Frame")
+            div.Size = UDim2.new(1, 0, 0, 1)
+            div.BackgroundColor3 = theme.Hover
+            div.BorderSizePixel = 0
+            div.Parent = TabContainer
+        end
+
+        function TabObject:ThemeSelector()
+            local themeNames = {}
+            for name, _ in pairs(RocketUI.Themes) do
+                table.insert(themeNames, name)
+            end
+            TabObject:Dropdown({
+                Title = "Tema da Interface",
+                Options = themeNames,
+                Default = RocketUI.CurrentTheme,
+                Callback = function(selectedTheme)
+                    if RocketUI.Themes[selectedTheme] then
+                        RocketUI.CurrentTheme = selectedTheme
+                        RocketUI:Notify({
+                            Title = "Tema Alterado",
+                            Content = "O tema " .. selectedTheme .. " foi aplicado.",
+                            Type = "Info",
+                            Duration = 3
+                        })
+                    end
+                end
+            })
+        end
+
+        return TabObject
+    end
+
+    return WindowObject
+end
+
+return RocketUI
